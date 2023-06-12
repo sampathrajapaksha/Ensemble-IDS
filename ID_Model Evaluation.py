@@ -1,4 +1,3 @@
-# CyCon Paper model
 
 # import libraries
 import tensorflow as tf
