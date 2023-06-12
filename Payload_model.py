@@ -164,37 +164,6 @@ df_benign_anomaly = data_preprocessing(df_benign_anomaly)
 end = time.time()
 print('time : ', end - start)
 
-#%%
-# save dataframes
-df_basic_long.to_pickle('/Users/sampathrajapaksha/Documents/pythonProject/Payload_Models/data/df_basic_long')
-df_basic_short.to_pickle('/Users/sampathrajapaksha/Documents/pythonProject/Payload_Models/data/df_basic_short')
-df_extended_long.to_pickle('/Users/sampathrajapaksha/Documents/pythonProject/Payload_Models/data/df_extended_long')
-df_extended_short.to_pickle('/Users/sampathrajapaksha/Documents/pythonProject/Payload_Models/data/df_extended_short')
-df_radio_infotainment.to_pickle('/Users/sampathrajapaksha/Documents/pythonProject/Payload_Models/data/df_radio_infotainment')
-df_drive_winter.to_pickle('/Users/sampathrajapaksha/Documents/pythonProject/Payload_Models/data/df_drive_winter')
-df_exercise_all_bits.to_pickle('/Users/sampathrajapaksha/Documents/pythonProject/Payload_Models/data/df_exercise_all_bits')
-df_idle_radio_infotainment.to_pickle('/Users/sampathrajapaksha/Documents/pythonProject/Payload_Models/data/df_idle_radio_infotainment')
-df_reverse.to_pickle('/Users/sampathrajapaksha/Documents/pythonProject/Payload_Models/data/df_reverse')
-df_highway_street_driving.to_pickle('/Users/sampathrajapaksha/Documents/pythonProject/Payload_Models/data/df_highway_street_driving')
-df_highway_street_driving_long.to_pickle('/Users/sampathrajapaksha/Documents/pythonProject/Payload_Models/data/df_highway_street_driving_long')
-df_benign_anomaly.to_pickle('/Users/sampathrajapaksha/Documents/pythonProject/Payload_Models/data/df_benign_anomaly')
-
-#%%
-# read saved df pickle files
-df_basic_long = pd.read_pickle('/Users/sampathrajapaksha/Documents/pythonProject/Payload_Models/data/df_basic_long')
-df_basic_short = pd.read_pickle('/Users/sampathrajapaksha/Documents/pythonProject/Payload_Models/data/df_basic_short')
-df_extended_long = pd.read_pickle('/Users/sampathrajapaksha/Documents/pythonProject/Payload_Models/data/df_extended_long')
-df_extended_short = pd.read_pickle('/Users/sampathrajapaksha/Documents/pythonProject/Payload_Models/data/df_extended_short')
-df_radio_infotainment = pd.read_pickle('/Users/sampathrajapaksha/Documents/pythonProject/Payload_Models/data/df_radio_infotainment')
-df_drive_winter = pd.read_pickle('/Users/sampathrajapaksha/Documents/pythonProject/Payload_Models/data/df_drive_winter')
-df_exercise_all_bits = pd.read_pickle('/Users/sampathrajapaksha/Documents/pythonProject/Payload_Models/data/df_exercise_all_bits')
-df_idle_radio_infotainment = pd.read_pickle('/Users/sampathrajapaksha/Documents/pythonProject/Payload_Models/data/df_idle_radio_infotainment')
-df_reverse = pd.read_pickle('/Users/sampathrajapaksha/Documents/pythonProject/Payload_Models/data/df_reverse')
-df_highway_street_driving = pd.read_pickle('/Users/sampathrajapaksha/Documents/pythonProject/Payload_Models/data/df_highway_street_driving')
-df_highway_street_driving_long = pd.read_pickle('/Users/sampathrajapaksha/Documents/pythonProject/Payload_Models/data/df_highway_street_driving_long')
-df_benign_anomaly = pd.read_pickle('/Users/sampathrajapaksha/Documents/pythonProject/Payload_Models/data/df_benign_anomaly')
-
-
 # %%
 # create a function to fit scaler for all variables
 """ need to use a large dataset which represents the benign driving population.
