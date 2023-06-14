@@ -1,3 +1,4 @@
+# CyCon Paper model
 
 # import libraries
 import tensorflow as tf
@@ -20,6 +21,7 @@ import time
 import seaborn as sns
 from sklearn.svm import OneClassSVM
 
+from Payload_model_evaluation import attack_join
 from road_attacks import ID_speedometer, ID_max_speedometer_mas, ID_corr_sig, ID_corr_sig_mas, ID_reverse_light_on, \
     ID_reverse_light_on_mas, ID_reverse_light_off, ID_reverse_light_off_mas
 
@@ -44,6 +46,10 @@ def data_preprocessing(df):
 
     df['time'] = pd.to_numeric(df['time'])
     sorted_df = df.sort_values(by=['time'])
+
+    sorted_df['time_abs'] = sorted_df.time - min(sorted_df.time)
+    sorted_df['time_dif'] = sorted_df['time_abs'].diff()
+    sorted_df['time_dif'] = sorted_df['time_dif'].fillna(sorted_df['time_dif'].mean())
 
     return sorted_df
 
@@ -105,6 +111,7 @@ df_highway_street_driving = data_preprocessing(df_highway_street_driving)
 df_highway_street_driving_long = data_preprocessing(df_highway_street_driving_long)
 df_benign_anomaly = data_preprocessing(df_benign_anomaly)
 
+# training and threshold estimation dataset selection
 dataframes = [df_extended_long, df_extended_short, df_radio_infotainment, df_drive_winter, df_exercise_all_bits,
               df_idle_radio_infotainment, df_reverse, df_highway_street_driving, df_highway_street_driving_long,
               df_benign_anomaly]
@@ -122,19 +129,13 @@ for df in dataframes:
     training.append(train_df)
     threshold_estimation.append(test_df)
 
-BenTrainSet = pd.concat(training, ignore_index=True)
-# convert payload values to int
-payload_columns = ['d1_int', 'd2_int', 'd3_int', 'd4_int', 'd5_int', 'd6_int', 'd7_int', 'd8_int']
-for i in payload_columns:
-    BenTrainSet[i] = BenTrainSet[i].astype('int')
-print('dataset imported')
-
-train = BenTrainSet[:]
-train = train[['id', 'time_abs', 'time_dif']]
-train.reset_index(drop=True, inplace=True)
+training_df = pd.concat(training, ignore_index=True)
+training_df = training_df[['id', 'time_abs', 'time_dif']]
+training_df.reset_index(drop=True, inplace=True)
 
 # %%
-benign_df = train.copy()
+# benign dataset preproceesing
+benign_df = training_df.copy()
 
 # convert df data into a series
 tempId = pd.Series(benign_df['id'])
@@ -142,9 +143,10 @@ tempId = tempId.str.cat(sep=' ')
 
 tokenizer = Tokenizer(oov_token=True)
 tokenizer.fit_on_texts([tempId])
-#
+
 # saving the tokenizer for predict function.
-pickle.dump(tokenizer, open('id_tokens.pkl', 'wb'))
+tokenizer_file = os.path.join(dirname, 'saved_files/ID_model_tokenizer')
+pickle.dump(tokenizer, open(tokenizer_file, 'wb'))
 
 sequence_data = tokenizer.texts_to_sequences([tempId])[0]
 
@@ -220,17 +222,17 @@ X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.05, random
 j = 10
 model = Sequential()
 model.add(Embedding(vocab_size, 50, input_length=j))
-model.add((LSTM(32, return_sequences=False)))
+model.add((GRU(32, return_sequences=False)))
 model.add(Dense(vocab_size, activation="softmax"))
 
 model.compile(loss="categorical_crossentropy", optimizer=Adam(lr=0.001), metrics=['accuracy'])
 model.summary()
-es = EarlyStopping(monitor='val_loss', mode='min', verbose=1, patience=3)
-history = model.fit(X_train, y_train, epochs=100, batch_size=256, validation_split=0.5, callbacks=[es]).history
+es = EarlyStopping(monitor='val_loss', mode='min', verbose=1, patience=10)
+history = model.fit(X_train, y_train, epochs=100, batch_size=128, validation_split=0.5, callbacks=[es]).history
 
 #%%
-model.save('saved_files/load_lstm_id_model_2.h5')
-pickle.dump(history, open("saved_files/load_lstm_id_history_2.pkl", "wb"))
+GRU_model = os.path.join(dirname, 'saved_files/ID_based_GRU_model')
+model.save(GRU_model)
 
 plt.plot(history['accuracy'])
 plt.plot(history['val_accuracy'])
@@ -249,7 +251,8 @@ plt.legend(['train', 'test'], loc='upper left')
 plt.show()
 
 # %%
-# prediction
+# functions for predictions
+'''This function calculate Benign and Anomaly count for each observation window of time T'''
 def winRatio(tempData):
     true_label_1 = len(tempData[tempData['label'] == 1])
     true_label_all = len(tempData)
@@ -263,7 +266,7 @@ def winRatio(tempData):
     else:
         true_label = 0
 
-    label_ratio = 0.01
+    label_ratio = 0.01 # (window threshold  Ψ)
     if pred_label_1 / pred_label_all > label_ratio:
         pred_label = 1
     else:
@@ -282,33 +285,31 @@ def results_evaluation(pred_RPM, eval_df, y, winRatio, id_threshold_dic, thresho
 
     eval_df['true_id'] = y
     eval_df['id_pred_prob'] = pred_prob
-    eval_df['threshold'] = eval_df['id'].map(id_threshold_dic)
+    eval_df['threshold'] = eval_df['id'].map(id_threshold_dic)  # map ID based thresholds
     eval_df['threshold'] = eval_df['threshold'].astype('float')
     eval_df['threshold'] = eval_df['threshold'].fillna(1)
 
     # pred class
     eval_df['pred_class'] = np.where(eval_df['id_pred_prob'] <= eval_df['threshold'], 1, 0)
 
-    windowSize = 0.025
+    windowSize = 0.025 # observation window size
     numWindows = (eval_df.time.max() - eval_df.time.min()) / windowSize
-    # benWinLimit = round((testSet.time[len(BenTestSet)]-testSet.time.min())/wndowSize)
 
     startValue = eval_df.time.min()
     stopValue = startValue + windowSize
 
+    # sliding windows
     k_list = []
     ratio_list = []
     for k in range(1, int(numWindows - 1)):
         smallerWindow = eval_df[(eval_df.time >= startValue) & (eval_df.time < stopValue)]
-
         ratio = winRatio(smallerWindow)
         k_list.append(k)
         ratio_list.append(ratio)
-
         startValue = stopValue
         stopValue = startValue + windowSize
 
-    # ratio return 2 lists, true window at 0 and pred_window at 1
+    # ratio_list return 2 lists, true window at 0 and pred_window at 1
     true_window = []
     for i in range(len(ratio_list)):
         l = ratio_list[i][0]
@@ -325,7 +326,8 @@ def results_evaluation(pred_RPM, eval_df, y, winRatio, id_threshold_dic, thresho
 
 
 # %%
-model = load_model('saved_files/load_lstm_id_model_2.h5')
+# Threshold estimations (Anomaly threshold ω)
+model = load_model(GRU_model)
 BenTestSet = pd.concat(threshold_estimation, ignore_index=True)
 
 start = time.time()
@@ -340,17 +342,9 @@ sequence_data = tokenizer.texts_to_sequences([BenId])[0]
 X, y = seq(sequence_data)
 eval_df_benign = df[5:-5]  # 3 - no of context words
 
-start = time.time()
-
-for i in X:
-    # print(i)
-    x_input = np.expand_dims(i, axis=0)
-    pred_RPM = model.predict_on_batch(x_input)
-end = time.time()
-print((end-start)/len(X))
+pred_RPM = model.predict(X)
 eval_df_benign['true_id'] = y
 
-#%% Threshold calculation
 # find the predicted probability for each ID
 pred_prob = []
 for i in range(len(pred_RPM)):
@@ -362,15 +356,12 @@ eval_df_benign['id_pred_prob'] = pred_prob
 threshold_all = eval_df_benign['id_pred_prob'].quantile(0.001)
 
 # threshold calculation for each id
-threshold_df = eval_df_benign.groupby('id')['id_pred_prob'].min()  # defalut - min()
+threshold_df = eval_df_benign.groupby('id')['id_pred_prob'].quantile(0.001)
 id_threshold_dic = dict(threshold_df)
-end = time.time()
-tot_time = end - start
-print('groupby time : ', tot_time)
 
 # %%
 # density plot visualization
-df_id = eval_df_benign[eval_df_benign.id == '4E7']
+df_id = eval_df_benign[eval_df_benign.id == '6E0']
 #df_id = eval_df_benign
 plt.figure(figsize=(10, 6), dpi=80)
 # plt.title('density plot 580', fontsize=16)
@@ -384,9 +375,9 @@ plt.xlabel('ID inter arrival time', fontsize = 16)
 plt.ylabel('frequency', fontsize = 16)
 plt.show()
 
-
 # %%
-model = load_model('saved_files/load_lstm_id_model_2.h5')
+# Performance Evaluation
+model = load_model(GRU_model)
 attacks = [ID_speedometer, ID_max_speedometer_mas, ID_corr_sig, ID_corr_sig_mas, ID_reverse_light_on,
            ID_reverse_light_on_mas, ID_reverse_light_off, ID_reverse_light_off_mas]
 #
@@ -401,7 +392,6 @@ for i in attacks:
     sequence_data = tokenizer.texts_to_sequences([BenId])[0]
     X, y = seq(sequence_data)
     eval_df = df[5:-5] # [5:-5] for dgx model
-
 
     start = time.time()
     pred_RPM = model.predict(X)
@@ -435,6 +425,8 @@ for i in attacks:
 
 # %%
 # Ensemble model predictions
+# need to run this for all attacks separately
+payload_list = list(attack_join['pred_class'])
 or_list = [a or b for a,b in zip(gru_list, payload_list)]
 
 print(classification_report(true_window, or_list))

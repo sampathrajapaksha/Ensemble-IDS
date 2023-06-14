@@ -65,19 +65,18 @@ def data_creation_eval(df_benign):
     df_benign = df_benign.dropna()
     df_benign = df_benign.reset_index(drop=True)
 
-    # copy_benign = df_benign.copy()
     # drop columns which was not in train dataset (col_list_0)
-    # load col_list_0
-    with open('column_list_dlc_0', 'rb') as fp:
+    constant_variables = os.path.join(dirname, 'saved_files/column_list_dlc_0')
+    with open(constant_variables, 'rb') as fp:
         col_list_0 = pickle.load(fp)
     df_benign = df_benign.drop(col_list_0, axis=1)
 
     # keep only train dataset columns in same order
-    with open('column_list', 'rb') as fp:
+    variables_order = os.path.join(dirname, 'saved_files/column_list')
+    with open(variables_order, 'rb') as fp:
         df_col_list = pickle.load(fp)
     print('number of columns :', len(df_col_list))
     df_benign = df_benign[df_col_list]
-    # df_benign = df_benign[combined_df.columns[:]]
 
     # select only selected ID (0D0 for this)
     # df_benign = df_benign[df_benign.id == '125']
@@ -87,14 +86,16 @@ def data_creation_eval(df_benign):
     autoencoder_benign = df_benign.drop(df_benign.columns[:11], axis=1)
 
     # feature scaling
-    fit_scaling = pickle.load(open('minmax_scale.sav', 'rb'))
+    minmax_scale = os.path.join(dirname, 'saved_files/minmax_scale.sav')
+    fit_scaling = pickle.load(open(minmax_scale, 'rb'))
     fit_apply_ben = fit_scaling.transform(autoencoder_benign)
     autoencoder_df = pd.DataFrame(fit_apply_ben, columns=autoencoder_benign.columns, index=autoencoder_benign.index)
 
     # replace values with Zero for unassociated varaiable
     autoencoder_df['id'] = df_benign['id']
     all_vars = autoencoder_df.columns[:-1]
-    with open('corr_list_id', 'rb') as fp:
+    associated_variables = os.path.join(dirname, 'saved_files/corr_list_id')
+    with open(associated_variables, 'rb') as fp:
         corr_list_id = pickle.load(fp)
     print('value replacement')
     for k, v in corr_list_id.items():
@@ -103,13 +104,6 @@ def data_creation_eval(df_benign):
 
     autoencoder_df_test_id = autoencoder_df.copy()
     autoencoder_df = autoencoder_df.drop('id', axis=1)
-
-    # updated autoencoder_df with only selected features for the ID
-    # load saved column list
-    # with open('corr_list_id', 'rb') as fp:
-    #     corr_list_id = pickle.load(fp)
-    # select columns
-    # autoencoder_df = autoencoder_df[corr_list_id]
 
     X_test = autoencoder_df.to_numpy()
 
@@ -129,7 +123,7 @@ test_id_col = combined_df_test[['id']] # identify the ID
 test_id_col = test_id_col.reset_index(drop=True)
 
 #%%
-# benign distance limits calculations
+# Latent space autoencoder predictions for encoder outputs (X_benign_Z)
 latent_filepath = os.path.join(dirname, 'saved_files/Latent_autoencoder_model')
 AE_latent = load_model(latent_filepath)
 new_X_ben_Z_arr = AE_latent.predict(X_benign_Z)
@@ -142,13 +136,13 @@ id_index_ben = {req_word: [idx for idx, word in enumerate(id_list_ben) if word =
                 set(id_list_ben)}
 
 #%%
+# threshold estimation for latent space AE (Latent threshold μ)
 new_X_benign_Z = []
-# dist_ori = []
-latent_ID_TH = {}
+latent_ID_TH = {} # for latent space thresholds
 for i in range(len(list(test_id_col['id']))):
-    new_z_ben = new_X_ben_Z_arr[i]
-    X_benign_Z_i = X_benign_Z[i]  # get same raw from Z
-    dist = np.mean(np.abs(new_z_ben-X_benign_Z_i))
+    new_z_ben = new_X_ben_Z_arr[i] # predictions relevant to each ID in test dataset
+    X_benign_Z_i = X_benign_Z[i]  # get same raw from Z (This was the input for latent space AE)
+    dist = np.mean(np.abs(new_z_ben-X_benign_Z_i)) # calculate the MAE
     dic_value = test_id_col['id'][i]
     # print(dic_value)
     if dic_value not in latent_ID_TH:
@@ -158,25 +152,34 @@ for i in range(len(list(test_id_col['id']))):
     else:
         latent_ID_TH[dic_value].append(dist)
 
+Latent_thresholds = {}
+Latent_max = {}
+for k,v in latent_ID_TH.items():
+    quantile_99 = np.quantile(latent_ID_TH[k], 0.999)
+    l_max = max(latent_ID_TH[k])
+    Latent_max[k] = l_max
+    Latent_thresholds[k] = quantile_99
+
 #%%
+# threshold estimation for Vanilla AE (anomaly threshold ω) using threshold estimation dataset
 x_pred_benign = decoder_model.predict(X_benign_Z) # original model
 
+# df for predictions
 MAE_pred_df = pd.DataFrame(x_pred_benign, columns=autoencoder_df_test.columns)
 MAE_pred_df = MAE_pred_df.add_suffix('_pred')
 MAE_pred_df_list = MAE_pred_df.to_numpy()
 
+# df for inputs
 MAE_true_df = pd.DataFrame(X_benign, columns=autoencoder_df_test.columns)
 MAE_true_df = MAE_true_df.add_suffix('_true')
 MAE_true_df_list = MAE_true_df.to_numpy()
 
+# combined dataframe
 combined_df_test = combined_df_test.reset_index(drop=True)
 benign_join = pd.concat([MAE_true_df, MAE_pred_df], axis=1)
 benign_join['id'] = combined_df_test['id']
 
-# %%
-# threshold estimation for benign dataset
 test = benign_join
-# ID_thresholds = {}
 ID_thresholds_max = {}
 ID_thresholds_99 = {}
 signal_thresholds_max = {}
@@ -194,12 +197,11 @@ for id in test['id'].unique():
     signal_true = id_df[id_df.columns[id_df.columns.str.contains('true')]].values  # get actual columns
     signal_pred = id_df[id_df.columns[id_df.columns.str.contains('pred')]].values  # get predicted columns
 
-
     # calculate MAE for IDs
     # axis=0 for signal wise and 1 for ID wise
     ID_MAE = np.mean(np.abs(signal_true - signal_pred), axis=1)
     ID_MAE_max = ID_MAE.max()
-    ID_MAE_99 = np.quantile(ID_MAE, 0.99)
+    ID_MAE_99 = np.quantile(ID_MAE, 0.999)
     ID_thresholds_max[id] = ID_MAE_max
     ID_thresholds_99[id] = ID_MAE_99
 
@@ -229,13 +231,12 @@ def data_creation_attack(df_attack):
     df_attack = df_attack.dropna()
     df_attack = df_attack.reset_index(drop=True)
     print('reset index')
-    # copy_benign = df_benign.copy()
     # drop columns which was not in train dataset (col_list_0)
     # load col_list_0
-    with open('column_list_dlc_0', 'rb') as fp:
+    constant_variables = os.path.join(dirname, 'saved_files/column_list_dlc_0')
+    with open(constant_variables, 'rb') as fp:
         col_list_0 = pickle.load(fp)
     df_attack = df_attack.drop(col_list_0, axis=1)
-    # Ori_lable = df_attack[['label']]
 
     # select only selected ID (0D0 for this)
     # df_attack = df_attack[df_attack.id.isin(['125', '0D0', '033', '6E0', '00E', '0A7', '354', '5E1'])]
@@ -243,7 +244,8 @@ def data_creation_attack(df_attack):
     Ori_lable = df_attack[['label']]
 
     # keep only train dataset columns in same order
-    with open('column_list', 'rb') as fp:
+    variables_order = os.path.join(dirname, 'saved_files/column_list')
+    with open(variables_order, 'rb') as fp:
         df_col_list = pickle.load(fp)
     print('number of columns :', len(df_col_list))
     df_attack = df_attack[df_col_list]
@@ -253,14 +255,16 @@ def data_creation_attack(df_attack):
     autoencoder_attack = df_attack.drop(df_attack.columns[:11], axis=1)
 
     # feature scaling
-    fit_scaling = pickle.load(open('minmax_scale.sav', 'rb'))
+    minmax_scale = os.path.join(dirname, 'saved_files/minmax_scale.sav')
+    fit_scaling = pickle.load(open(minmax_scale, 'rb'))
     fit_apply_ben = fit_scaling.transform(autoencoder_attack)
     autoencoder_df = pd.DataFrame(fit_apply_ben, columns=autoencoder_attack.columns, index=autoencoder_attack.index)
 
-    # replace values with Zero for unassociated varaiable
+    # replace values with Zero for unassociated variables
     autoencoder_df['id'] = df_attack['id']
     all_vars = autoencoder_df.columns[:-1]
-    with open('corr_list_id', 'rb') as fp:
+    associated_variables = os.path.join(dirname, 'saved_files/corr_list_id')
+    with open(associated_variables, 'rb') as fp:
         corr_list_id = pickle.load(fp)
     print('value replacement')
     for k, v in corr_list_id.items():
@@ -287,21 +291,39 @@ for i in attacks:
     att_id_col = combined_df_attack[['id']] # identify the ID
     att_id_col = att_id_col.reset_index(drop=True)
 
-    new_X_attack_Z_arr = AE_latent.predict(X_attack_Z)
+    # Calculate input for the decoder
+    new_X_attack_Z_arr = AE_latent.predict(X_attack_Z)  # latent prediction
     ID_MAE_AE_ori = np.mean(np.abs(new_X_attack_Z_arr - X_attack_Z), axis=1)
+    list_ids = att_id_col['id'].tolist() # convert ids into a list
+    new_X_attack_Z = []
+    for i in range(len(new_X_attack_Z_arr)):
+        dist = np.mean(np.abs(new_X_attack_Z_arr[i]-X_attack_Z[i])) # dist--> E2
+        # check if Latent MAE (E2) > Latent_thresholds (μ)
+        if dist > Latent_max[list_ids[i]]:
+            Z_hat = list(new_X_attack_Z_arr[i])
+            # Z_hat = list(new_X_attack_Z_arr[i]*X_attack_Z[i]) # can be used to increase the error for anomalies
+        else:
+            Z_hat = list(X_attack_Z[i])
+        new_X_attack_Z.append(Z_hat)
+    # new latent space
+    new_X_attack_Z_arr_ae = np.array(new_X_attack_Z)
 
-    x_pred_attack = decoder_model.predict(X_attack_Z) # original model
+    x_pred_attack = decoder_model.predict(new_X_attack_Z_arr_ae) # Latent AE output
+    # x_pred_attack = decoder_model.predict(X_attack_Z) # Vanilla AE output (for the comparison)
 
+    # E1 calculation
     combined_df_attack = combined_df_attack.reset_index(drop=True)
-
+    # predictions
     MAE_pred_df = pd.DataFrame(x_pred_attack, columns=autoencoder_df_attack.columns)
     MAE_pred_df = MAE_pred_df.add_suffix('_pred')
     MAE_pred_df_list = MAE_pred_df.to_numpy()
 
+    # inputs
     MAE_true_df = pd.DataFrame(Attack, columns=autoencoder_df_attack.columns)
     MAE_true_df = MAE_true_df.add_suffix('_true')
     MAE_true_df_list = MAE_true_df.to_numpy()
 
+    # combined dataframe
     combined_df_attack.reset_index(drop=True, inplace=True)
     Ori_lable.reset_index(drop=True, inplace=True)
     attack_join = pd.concat([MAE_true_df, MAE_pred_df], axis=1)
@@ -310,7 +332,7 @@ for i in attacks:
     attack_join['Time'] = combined_df_attack['time_abs']
     attack_join['Latent_MAE_ori'] = ID_MAE_AE_ori
 
-    # for All variable threshold
+    # for All variable threshold (E1)
     ID_MAE = np.mean(np.abs(MAE_true_df_list - MAE_pred_df_list), axis=1)
     attack_join['MAE'] = ID_MAE
 
@@ -343,13 +365,13 @@ for i in attacks:
         pred_label_1 = len(tempData[tempData['pred_class'] == 1])
         pred_label_all = len(tempData)
 
-        label_ratio = 0.01  # change for low frequent attacks
+        label_ratio = 0.03  # change for low frequent attacks
         if true_label_1 / true_label_all > label_ratio:
             true_label = 1
         else:
             true_label = 0
 
-        label_ratio = 0.01
+        label_ratio = 0.03
         if pred_label_1 / pred_label_all > label_ratio:
             pred_label = 1
         else:
