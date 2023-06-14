@@ -302,12 +302,13 @@ def data_creation(combined_df):
 
     # use this only after identifying associated variables
     # comment this code for create a df for associated variable identification
-    # with open('corr_list_id', 'rb') as fp:
-    #     corr_list_id = pickle.load(fp)
-    # print('value replacement')
-    # for k,v in corr_list_id.items():
-    #      remove_var = list(set(all_vars)-set(v))
-    #      autoencoder_df.loc[autoencoder_df['id'] == k, remove_var] = 0
+    corr_list_id = os.path.join(dirname, 'saved_files/corr_list_id')
+    with open(corr_list_id, 'rb') as fp:
+        corr_list_id = pickle.load(fp)
+    print('value replacement')
+    for k,v in corr_list_id.items():
+        remove_var = list(set(all_vars)-set(v))
+        autoencoder_df.loc[autoencoder_df['id'] == k, remove_var] = 0
 
     # shuffle before ID drop
     autoencoder_df = sklearn.utils.shuffle(autoencoder_df)
@@ -321,7 +322,7 @@ def data_creation(combined_df):
     return X_train, autoencoder_df, autoencoder_df_id
 
 #%%
-# training and threshold dataset selection
+# training and threshold estimation dataset selection
 dataframes = [df_extended_long, df_extended_short, df_radio_infotainment, df_drive_winter, df_exercise_all_bits,
               df_idle_radio_infotainment, df_reverse, df_highway_street_driving, df_highway_street_driving_long,
               df_benign_anomaly]
@@ -339,6 +340,7 @@ for df in dataframes:
     training.append(train_df)
     threshold_estimation.append(test_df)
 
+#%%
 # dataframe to fit scaler
 scale_dataframe = pd.concat(training, ignore_index=True)
 fit_scaling, autoencoder_df_scaling = scaler_fit(scale_dataframe)
@@ -384,7 +386,7 @@ def model_fit(X_train):
         autoencoder.compile(loss='mse', optimizer=Adam(lr=l_rate))
         autoencoder.summary()
 
-        es = EarlyStopping('val_loss', mode='min', verbose=1, patience=5)
+        es = EarlyStopping('val_loss', mode='min', verbose=1, patience=10)
         filepath = os.path.join(dirname, 'saved_files/autoencoder_model_checkpoint')
         checkpoint = ModelCheckpoint(filepath=filepath,
                                      monitor='val_loss',
@@ -402,7 +404,7 @@ def model_fit(X_train):
 
         print('decoder saving...')
         decoder_model = Model(inputs=encoder.output, outputs=decoder(encoder.output))
-        decoder_path = os.path.join(dirname, 'saved_files/encoder_model')
+        decoder_path = os.path.join(dirname, 'saved_files/decoder_model')
         decoder_model.save(decoder_path)
 
         train_loss.append(model_history["loss"])
@@ -424,7 +426,7 @@ model_history, lr_schedule = model_fit(X_train)
 #%%
 # load encoder and decoder
 encoder_path = os.path.join(dirname, 'saved_files/encoder_model')
-decoder_path = os.path.join(dirname, 'saved_files/encoder_model')
+decoder_path = os.path.join(dirname, 'saved_files/decoder_model')
 encoder_model = load_model(encoder_path)
 decoder_model = load_model(decoder_path)
 
@@ -452,9 +454,9 @@ Z_id_list = os.path.join(dirname, 'saved_files/id_pred_dic')
 with open(Z_id_list, 'wb') as fp:
     pickle.dump(id_pred_dic, fp)
 
-#%% Estimate atent size
+#%% Estimate latent size using PCA
 from sklearn.decomposition import PCA
-pca = PCA(n_components=0.90)
+pca = PCA(n_components=0.999)
 X_pca = pca.fit(Z) # this will fit and reduce dimensions
 print(pca.n_components_)
 #%% AE model for latent space
@@ -476,14 +478,14 @@ AE_latent = Model(inputD, decoded)
 AE_latent.compile(loss='mse', optimizer=Adam(lr=0.0001))
 AE_latent.summary()
 
-es = EarlyStopping('val_loss', mode='min', verbose=1, patience=5)
+es = EarlyStopping('val_loss', mode='min', verbose=1, patience=10)
 latent_filepath = os.path.join(dirname, 'saved_files/Latent_autoencoder_model')
 checkpoint = ModelCheckpoint(filepath=latent_filepath,
                              monitor='val_loss',
                              verbose=1,
                              save_best_only=True,
                              mode='min')
-AE_model_history = AE_latent.fit(Z, Z, epochs=100, batch_size=256, verbose=1, validation_split=0.1,
+AE_model_history = AE_latent.fit(Z, Z, epochs=100, batch_size=128, verbose=1, validation_split=0.1,
                                  callbacks=[es, checkpoint]).history
 
 plt.plot(AE_model_history["loss"][1:], 'b', label='Train')
