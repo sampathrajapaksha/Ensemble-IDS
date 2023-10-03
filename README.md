@@ -1,4 +1,5 @@
 # Beyond Vanilla: Improved Autoencoder-based Ensemble In-vehicle Intrusion Detection System
+https://www.sciencedirect.com/science/article/pii/S2214212623001540
 
 This repository include the code for the Improved Autoencoder-based Ensemble In-vehicle Intrusion Detection System
 
